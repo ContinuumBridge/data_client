@@ -30,12 +30,13 @@ from twisted.internet import task
 from twisted.internet.protocol import ReconnectingClientFactory
 
 config                = {}
-HOME                  = os.path.expanduser("~")
+#HOME                  = os.path.expanduser("~")
+HOME                  = os.getcwd()
 CB_ADDRESS            = "portal.continuumbridge.com"
 DBURL                 = "http://onepointtwentyone-horsebrokedown-1.c.influxdb.com:8086/"
 CB_LOGGING_LEVEL      = "DEBUG"
-CB_LOGFILE            = HOME + "/data_client/data_client.log"
-CONFIG_FILE           = HOME + "/data_client/data_client.config"
+CB_LOGFILE            = HOME + "/data_client.log"
+CONFIG_FILE           = HOME + "/data_client.config"
 CONFIG_READ_INTERVAL  = 10.0
  
 CB_LOGGING_LEVEL      = "DEBUG"
