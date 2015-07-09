@@ -176,17 +176,13 @@ class ClientWSProtocol(WebSocketClientProtocol):
         signal.signal(signal.SIGINT, self.signalHandler)  # For catching SIGINT
         signal.signal(signal.SIGTERM, self.signalHandler)  # For catching SIGTERM
         self.stopping = False
-    	self.readConfigLoop()
+        l1 = task.LoopingCall(readConfig, True)
+        l1.start(CONFIG_READ_INTERVAL)
 
     def signalHandler(self, signal, frame):
         logger.debug("signalHandler received signal")
         self.stopping = True
         reactor.stop()
-
-    def readConfigLoop(self):
-        #logger.debug("readConfigLoop")
-        readConfig(True)
-        configLoop = reactor.callLater(CONFIG_READ_INTERVAL, self.readConfigLoop)
 
     def sendToBridge(self, message):
         self.sendMessage(json.dumps(message))
