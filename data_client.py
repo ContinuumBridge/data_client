@@ -26,7 +26,6 @@ import twilio.rest
 from autobahn.twisted.websocket import WebSocketClientFactory, WebSocketClientProtocol, connectWS
 from twisted.internet import threads
 from twisted.internet import reactor, defer
-from twisted.internet import task
 from twisted.internet.protocol import ReconnectingClientFactory
 
 config                = {}
@@ -159,7 +158,6 @@ def readConfig(forceRead=False):
         if time.time() - os.path.getmtime(CONFIG_FILE) < 600 or forceRead:
             with open(CONFIG_FILE, 'r') as f:
                 newConfig = json.load(f)
-                logger.info( "Read config file")
                 config.update(newConfig)
                 logger.info("Config read")
             for c in config:
@@ -175,6 +173,10 @@ def readConfig(forceRead=False):
     except Exception as ex:
         logger.warning("Problem reading config file, type: %s, exception: %s", str(type(ex)), str(ex.args))
         return False
+
+def readConfigLoop():
+    readConfig(True)
+    reactor.callLater(CONFIG_READ_INTERVAL, readConfigLoop)
 
 class ClientWSFactory(ReconnectingClientFactory, WebSocketClientFactory):
     maxDelay = 60
@@ -197,8 +199,6 @@ class ClientWSProtocol(WebSocketClientProtocol):
         signal.signal(signal.SIGINT, self.signalHandler)  # For catching SIGINT
         signal.signal(signal.SIGTERM, self.signalHandler)  # For catching SIGTERM
         self.stopping = False
-        l1 = task.LoopingCall(readConfig, True)
-        l1.start(CONFIG_READ_INTERVAL)
 
     def signalHandler(self, signal, frame):
         logger.debug("signalHandler received signal")
@@ -314,4 +314,5 @@ if __name__ == '__main__':
     factory = ClientWSFactory(ws_url, headers=headers, debug=False)
     factory.protocol = ClientWSProtocol
     connectWS(factory)
+    reactor.callLater(CONFIG_READ_INTERVAL, readConfigLoop)
     reactor.run()
