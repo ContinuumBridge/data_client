@@ -284,6 +284,11 @@ class ClientWSProtocol(WebSocketClientProtocol):
                     dat = body["d"]
                     for d in dat:
                         d["columns"] = ["time", "value"]
+                        if "name_in_database" in config["bridges"][bid]:
+                            s = d["name"].split("/")
+                            d["name"] = config["bridges"][bid]["name_in_database"]
+                            for ss in s[1:]:
+                                d["name"] += "/" + ss                   
                     dd = dat
                     logger.debug("Posting to InfluxDB: %s", json.dumps(dd, indent=4))
                     reactor.callInThread(postInfluxDB, dd, bid)
