@@ -27,6 +27,7 @@ from autobahn.twisted.websocket import WebSocketClientFactory, WebSocketClientPr
 from twisted.internet import threads
 from twisted.internet import reactor, defer
 from twisted.internet.protocol import ReconnectingClientFactory
+from ISStreamer.Streamer import Streamer
 
 config                = {}
 #HOME                  = os.path.expanduser("~")
@@ -120,6 +121,23 @@ def doPumpco(body, bid):
             logger.warning("POSTing failed, status: %s", status)
     except Exception as ex:
         logger.warning("postInfluxDB problem, type %s, exception: %s", to, type(ex), str(ex.args))
+
+def postInitialState(body, bid):
+    streamer = Streamer(bucket_name="Python Stream Example", bucket_key="python_example", access_key="pXawt1V4L7P2kmHKlndrNJd6lfB5H3Oc")
+    streamer.set_bucket(bucket_name="New Bucket")
+    dat = body["d"]
+    for d in dat:
+        s = d["name"].split("/")
+        if "name_in_database" in config["bridges"][bid]:
+            bucket = config["bridges"][bid]["name_in_database"]
+        else:
+            bucket = s[0]
+        name = s[1] + "/" s[2]
+        epoch = dat["points"][0]
+        value = dat["points"][1]
+    logger.debug("Posting to InitialState: %s, %s, %s, %s", bucket, name, value, epoch)
+    reactor.callInThread(postInfluxDB, dd, bid)
+
 
 def sendSMS(messageBody, to):
     numbers = to.split(",")
@@ -294,6 +312,9 @@ class ClientWSProtocol(WebSocketClientProtocol):
                     reactor.callInThread(postInfluxDB, dd, bid)
                 except Exception as ex:
                     logger.warning("Problem processing data message, exception: %s %s", str(type(ex)), str(ex.args))
+            if "initialState" in config["bridges"][bid]:
+                if config["bridges"][bid]["initialState"]:
+                    postInitialState(body, bid)
         elif body["m"] == "req_config":
             if "config" in config["bridges"][bid]:
                 if aid in config["bridges"][bid]["config"]:
