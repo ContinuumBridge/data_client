@@ -27,6 +27,8 @@ from autobahn.twisted.websocket import WebSocketClientFactory, WebSocketClientPr
 from twisted.internet import threads
 from twisted.internet import reactor, defer
 from twisted.internet.protocol import ReconnectingClientFactory
+sys.path.append("../client-python")
+from cbclient import CBClient
 
 config                = {}
 #HOME                  = os.path.expanduser("~")
@@ -178,146 +180,109 @@ def readConfigLoop():
     readConfig(True)
     reactor.callLater(CONFIG_READ_INTERVAL, readConfigLoop)
 
-class ClientWSFactory(ReconnectingClientFactory, WebSocketClientFactory):
-    maxDelay = 60
-    maxRetries = 200
-    def startedConnecting(self, connector):
-        logger.debug('Started to connect.')
-        ReconnectingClientFactory.resetDelay
+def sendToBridge(msg):
+    client.sendMessage(msg["destination"], msg["body"])
 
-    def clientConnectionLost(self, connector, reason):
-        logger.debug('Lost connection. Reason: %s', reason)
-        ReconnectingClientFactory.clientConnectionLost(self, connector, reason)
-
-    def clientConnectionFailed(self, connector, reason):
-        logger.debug('Lost reason. Reason: %s', reason)
-        ReconnectingClientFactory.clientConnectionFailed(self, connector, reason)
-
-class ClientWSProtocol(WebSocketClientProtocol):
-    def __init__(self):
-        logger.debug("Connection __init__")
-        signal.signal(signal.SIGINT, self.signalHandler)  # For catching SIGINT
-        signal.signal(signal.SIGTERM, self.signalHandler)  # For catching SIGTERM
-        self.stopping = False
-
-    def signalHandler(self, signal, frame):
-        logger.debug("signalHandler received signal")
-        self.stopping = True
-        reactor.stop()
-
-    def sendToBridge(self, message):
-        self.sendMessage(json.dumps(message))
-
-    def onConnect(self, response):
-        logger.debug("Server connected: %s", str(response.peer))
-
-    def onOpen(self):
-        logger.debug("WebSocket connection open.")
-
-    def onClose(self, wasClean, code, reason):
-        logger.debug("onClose, reason:: %s", reason)
-
-    def onMessage(self, message, isBinary):
-        #logger.debug("onMessage")
-        try:
-            msg = json.loads(message)
-            logger.info("Message received: %s", json.dumps(msg, indent=4))
-        except Exception as ex:
-            logger.warning("onmessage. Unable to load json, type: %s, exception: %s", str(type(ex)), str(ex.args))
-        if not "source" in msg:
-            logger.warning("onMessage. message without source")
+def onMessage(message, isBinary):
+    #logger.debug("onMessage")
+    try:
+        msg = json.loads(message)
+        logger.info("Message received: %s", json.dumps(msg, indent=4))
+    except Exception as ex:
+        logger.warning("onmessage. Unable to load json, type: %s, exception: %s", str(type(ex)), str(ex.args))
+    if not "source" in msg:
+        logger.warning("onMessage. message without source")
+        return
+    if not "body" in msg:
+        logger.warning("onMessage. message without body")
+        return
+    if msg["body"] == "connected":
+        logger.info("Connected to ContinuumBridge")
+    else:
+        bid = msg["source"].split("/")[0]
+        aid = msg["source"].split("/")[1]
+        #logger.debug("bid: %s", bid)
+        #logger.debug("config_bridges: %s", str(config["bridges"]))
+        if bid not in config["bridges"]:
+            logger.info("Message from unregistered bridge: %s", bid)
             return
-        if not "body" in msg:
-            logger.warning("onMessage. message without body")
-            return
-        if msg["body"] == "connected":
-            logger.info("Connected to ContinuumBridge")
-        else:
-            bid = msg["source"].split("/")[0]
-            aid = msg["source"].split("/")[1]
-            #logger.debug("bid: %s", bid)
-            #logger.debug("config_bridges: %s", str(config["bridges"]))
-            if bid not in config["bridges"]:
-                logger.info("Message from unregistered bridge: %s", bid)
-                return
-            found = False
-            for body in msg["body"]:
-                rx_n = 0
-                if "n" in body:
-                    found = True
-                    if rx_n <= body["n"]:
-                        rx_n = body["n"]
-                        del body["n"]
-                self.processBody(msg["source"], body, bid, aid)
-            if found:
-                ack = {
-                        "source": config["cid"],
-                        "destination": msg["source"],
-                        "body": [
-                                    {"a": rx_n}
-                                ]
-                      }
-                #logger.debug("onMessage ack: %s", str(json.dumps(ack, indent=4)))
-                reactor.callInThread(self.sendToBridge, ack)
-
-    def processBody(self, destination, body, bid, aid):
-        logger.debug("body: %s", str(body))
-        if body["m"] == "alert":
-            try:
-                bridge = config["bridges"][bid]["friendly_name"]
-                if "a" in body:
-                    emailBody =  "Message from " + bridge + ": " + body["a"]
-                    subject = body["a"]
-                if "email" in config["bridges"][bid]:
-                    reactor.callInThread(sendMail, config["bridges"][bid]["email"], bridge, subject, emailBody)
-                if "sms" in config["bridges"][bid]:
-                    reactor.callInThread(sendSMS, emailBody, config["bridges"][bid]["sms"])
-            except Exception as ex:
-                logger.warning("Problem processing alert message, exception: %s %s", str(type(ex)), str(ex.args))
-        elif body["m"] == "data":
-            logger.info("Data messsage received")
-            if "service_provider" in config["bridges"][bid]:
-                if config["bridges"][bid]["service_provider"] == "pumpco":
-                    doPumpco(body, bid)
-            else:
-                try:
-                    dat = body["d"]
-                    for d in dat:
-                        d["columns"] = ["time", "value"]
-                        if "name_in_database" in config["bridges"][bid]:
-                            s = d["name"].split("/")
-                            d["name"] = config["bridges"][bid]["name_in_database"]
-                            for ss in s[1:]:
-                                d["name"] += "/" + ss                   
-                    dd = dat
-                    logger.debug("Posting to InfluxDB: %s", json.dumps(dd, indent=4))
-                    reactor.callInThread(postInfluxDB, dd, bid)
-                except Exception as ex:
-                    logger.warning("Problem processing data message, exception: %s %s", str(type(ex)), str(ex.args))
-        elif body["m"] == "req_config":
-            if "config" in config["bridges"][bid]:
-                if aid in config["bridges"][bid]["config"]:
-                    app_config = config["bridges"][bid]["config"][aid]
-                else:
-                    app_config = {"warning": "no config"}
-                ack = {
+        found = False
+        for body in msg["body"]:
+            rx_n = 0
+            if "n" in body:
+                found = True
+                if rx_n <= body["n"]:
+                    rx_n = body["n"]
+                    del body["n"]
+            processBody(msg["source"], body, bid, aid)
+        if found:
+            ack = {
                     "source": config["cid"],
-                    "destination": destination,
+                    "destination": msg["source"],
                     "body": [
-                        {"config": app_config}
-                    ]
-                }
-                logger.debug("onMessage ack: %s", str(json.dumps(ack, indent=4)))
-                reactor.callInThread(self.sendToBridge, ack)
+                                {"a": rx_n}
+                            ]
+                  }
+            #logger.debug("onMessage ack: %s", str(json.dumps(ack, indent=4)))
+            reactor.callInThread(sendToBridge, ack)
+
+def processBody(destination, body, bid, aid):
+    logger.debug("body: %s", str(body))
+    if body["m"] == "alert":
+        try:
+            bridge = config["bridges"][bid]["friendly_name"]
+            if "a" in body:
+                emailBody =  "Message from " + bridge + ": " + body["a"]
+                subject = body["a"]
+            if "email" in config["bridges"][bid]:
+                reactor.callInThread(sendMail, config["bridges"][bid]["email"], bridge, subject, emailBody)
+            if "sms" in config["bridges"][bid]:
+                reactor.callInThread(sendSMS, emailBody, config["bridges"][bid]["sms"])
+        except Exception as ex:
+            logger.warning("Problem processing alert message, exception: %s %s", str(type(ex)), str(ex.args))
+    elif body["m"] == "data":
+        logger.info("Data messsage received")
+        if "service_provider" in config["bridges"][bid]:
+            if config["bridges"][bid]["service_provider"] == "pumpco":
+                doPumpco(body, bid)
+        else:
+            try:
+                dat = body["d"]
+                for d in dat:
+                    d["columns"] = ["time", "value"]
+                    if "name_in_database" in config["bridges"][bid]:
+                        s = d["name"].split("/")
+                        d["name"] = config["bridges"][bid]["name_in_database"]
+                        for ss in s[1:]:
+                            d["name"] += "/" + ss                   
+                dd = dat
+                logger.debug("Posting to InfluxDB: %s", json.dumps(dd, indent=4))
+                reactor.callInThread(postInfluxDB, dd, bid)
+            except Exception as ex:
+                logger.warning("Problem processing data message, exception: %s %s", str(type(ex)), str(ex.args))
+    elif body["m"] == "req_config":
+        if "config" in config["bridges"][bid]:
+            if aid in config["bridges"][bid]["config"]:
+                app_config = config["bridges"][bid]["config"][aid]
             else:
-                logger.info("onMessage. No config for: %s", bid)
+                app_config = {"warning": "no config"}
+            ack = {
+                "source": config["cid"],
+                "destination": destination,
+                "body": [
+                    {"config": app_config}
+                ]
+            }
+            logger.debug("onMessage ack: %s", str(json.dumps(ack, indent=4)))
+            reactor.callInThread(sendToBridge, ack)
+        else:
+            logger.info("onMessage. No config for: %s", bid)
 
 if __name__ == '__main__':
     readConfig(True)
-    cbid, sessionID, ws_url = authorise()
-    headers = {'sessionID': sessionID}
-    factory = ClientWSFactory(ws_url, headers=headers, debug=False)
-    factory.protocol = ClientWSProtocol
-    connectWS(factory)
     reactor.callLater(CONFIG_READ_INTERVAL, readConfigLoop)
+    ascii_key = config["cid_key"].encode("ascii")
+    client = CBClient(key=ascii_key, reactor=reactor, logger=logger)
+    client.onMessage = onMessage
+    readConfigLoop()
     reactor.run()
