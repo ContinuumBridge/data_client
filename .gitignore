@@ -2,3 +2,4 @@ downloads
 .idea
 *.log*
 *.swp
+venv/*
