@@ -98,7 +98,7 @@ def postInfluxDB(dat, bid):
         if status !=200:
             logger.warning("POSTing failed, status: %s", status)
     except Exception as ex:
-        logger.warning("postInfluxDB problem, type %s, exception: %s", to, type(ex), str(ex.args))
+        logger.warning("postInfluxDB problem, type %s, exception: %s", type(ex), str(ex.args))
 
 def doPumpco(body, bid):
     logger.debug("doPumpco")
