@@ -100,7 +100,7 @@ def postInfluxDB(dat, bid):
         if status !=200:
             logger.warning("POSTing failed, status: %s", status)
     except Exception as ex:
-        logger.warning("postInfluxDB problem, type %s, exception: %s", to, type(ex), str(ex.args))
+        logger.warning("postInfluxDB problem, type %s, exception: %s", type(ex), str(ex.args))
 
 def doPumpco(body, bid):
     logger.debug("doPumpco")
@@ -280,6 +280,11 @@ def processBody(destination, body, bid, aid):
 
 if __name__ == '__main__':
     readConfig(True)
+    cbid, sessionID, ws_url = authorise()
+    headers = {'sessionID': sessionID}
+    factory = ClientWSFactory(ws_url, headers=headers)
+    factory.protocol = ClientWSProtocol
+    connectWS(factory)
     reactor.callLater(CONFIG_READ_INTERVAL, readConfigLoop)
     ascii_key = config["cid_key"].encode("ascii")
     client = CBClient(key=ascii_key, reactor=reactor, logger=logger)
