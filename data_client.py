@@ -316,7 +316,7 @@ if __name__ == '__main__':
     readConfig(True)
     cbid, sessionID, ws_url = authorise()
     headers = {'sessionID': sessionID}
-    factory = ClientWSFactory(ws_url, headers=headers, debug=False)
+    factory = ClientWSFactory(ws_url, headers=headers)
     factory.protocol = ClientWSProtocol
     connectWS(factory)
     reactor.callLater(CONFIG_READ_INTERVAL, readConfigLoop)
