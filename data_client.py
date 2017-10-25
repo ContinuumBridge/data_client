@@ -16,6 +16,7 @@ import sys
 import os.path
 import signal
 import smtplib
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.MIMEImage import MIMEImage
@@ -60,6 +61,8 @@ except Exception as e:
     logger.error("Problem setting config file: {}, {}".format(type(e), e.args))
     print("Problem setting config file: {}, {}".format(type(e), e.args))
     sys.exit()
+
+reactor.suggestThreadPoolSize(10)
 
 def nicetime(timeStamp):
     localtime = time.localtime(timeStamp)
@@ -340,18 +343,24 @@ class ClientWSProtocol(WebSocketClientProtocol):
                 try:
                 #if True:
                     dat = body["d"]
+                    if len(dat)>2:
+                        logger.debug("Long d: %s", str(json.dumps(dat, indent=4)))
                     for d in dat:
-                        s = d["name"].split("/")
-                       
+                        logger.debug("New d: %s", str(json.dumps(d, indent=4)))
+                        s = d["name"].split("/")                     
                         tdiff =  time.time() - d["points"][0][0]/1000
                         if abs(tdiff) > 300:
                             logger.warning("Bridge %s and client time are different by %s seconds", bid, str(tdiff))
                         do["time"] = d["points"][0][0]
-                        do["tags"]["characteristic"] = s[2]
-                        if s[2] == "power":
-                            do["fields"]["value"] = float(d["points"][0][1])
-                            logger.debug("Floating %s to  %s", d["points"][0][1], do["fields"]["value"])
+                        if s[2]:
+                            do["tags"]["characteristic"] = s[2]
+                            if s[2] == "power":
+                                do["fields"]["value"] = int(d["points"][0][1])
+                                logger.debug("Casting %s to  %s", d["points"][0][1], do["fields"]["value"])
+                            else:
+                                do["fields"]["value"] = d["points"][0][1]
                         else:
+                            do["tags"]["characteristic"] = "event"
                             do["fields"]["value"] = d["points"][0][1]
                         do["measurement"] = s[0]
                         do["tags"]["sensor"] = s[1]
