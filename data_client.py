@@ -102,14 +102,15 @@ def sendMail(to, sender, subject, body):
        
 def postInfluxDB1(dat, bid):
     url = config["dburl2"]
-    logger.debug("InfluxDB1, url: {}".format(url))
-    logger.debug("InfluxDB1, dat: {}".format(dat))
+    #logger.debug("InfluxDB1, url: {}".format(url))
     #N.B. it'll fail if the db doesn't exist - should create it here really
     if "database" in config["bridges"][bid]:
         db = config["bridges"][bid]["database"] 
     else:
         db = "Bridges"
-    logger.debug("Influx, writing to db %s", db)
+    #logger.debug("Influx, writing to db %s", db)
+    #logger.debug("InfluxDB1, writing: {}\n to database %s".format(dat), db)
+    logger.debug("Posting to %s database: %s", db, json.dumps(dat, indent=4))
     try:
         client = InfluxDBClient(host=url, port=8086, database=db)
     except Exception as e:
@@ -212,7 +213,6 @@ def readConfig(forceRead=False):
             with open(CONFIG_FILE, 'r') as f:
                 newConfig = json.load(f)
                 config.update(newConfig)
-                logger.info("Config read")
             for c in config:
                 if c.lower in ("true", "t", "1"):
                     config[c] = True
@@ -220,6 +220,7 @@ def readConfig(forceRead=False):
                     config[c] = False
             #logger.info("Read new config: " + json.dumps(config, indent=4))
             if config != oldconfig:
+                logger.info("Config changed")
                 return True
             else:
                 return False
@@ -344,17 +345,20 @@ class ClientWSProtocol(WebSocketClientProtocol):
                        
                         tdiff =  time.time() - d["points"][0][0]/1000
                         if abs(tdiff) > 300:
-                            logger.warning("Bridge and client time are different by %s seconds", str(tdiff))
+                            logger.warning("Bridge %s and client time are different by %s seconds", bid, str(tdiff))
                         do["time"] = d["points"][0][0]
-                        do["fields"]["value"] = d["points"][0][1]
-                        do["measurement"] = s[0]
                         do["tags"]["characteristic"] = s[2]
+                        if s[2] == "power":
+                            do["fields"]["value"] = float(d["points"][0][1])
+                            logger.debug("Floating %s to  %s", d["points"][0][1], do["fields"]["value"])
+                        else:
+                            do["fields"]["value"] = d["points"][0][1]
+                        do["measurement"] = s[0]
                         do["tags"]["sensor"] = s[1]
                         #if "friendly_name" in config["bridges"][bid]:
                         #    do["tags"]["friendly_name"] = config["bridges"][bid]["friendly_name"]
                         if "name_in_database" in config["bridges"][bid]:
                             do["tags"]["name_in_database"] = config["bridges"][bid]["name_in_database"]
-                        logger.debug("Posting to InfluxDB: %s", json.dumps(do, indent=4))
                         dd = [do]
                         reactor.callInThread(postInfluxDB1, dd, bid)
                 except Exception as ex:
