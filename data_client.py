@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # data_client.py
-# Copyright (C) ContinuumBridge Limited, 2015 - All Rights Reserved
+# Copyright (C) ContinuumBridge Limited, 2017 - All Rights Reserved
 # Unauthorized copying of this file, via any medium is strictly prohibited
 # Proprietary and confidential
-# Written by Peter Claydon
+# Written by Peter Claydon & Martin Sotheran
 #
 """
 Just stick actions from incoming requests into threads.
@@ -16,7 +16,6 @@ import sys
 import os.path
 import signal
 import smtplib
-import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.MIMEImage import MIMEImage
@@ -40,6 +39,7 @@ CB_LOGGING_LEVEL      = "DEBUG"
 CB_LOGFILE            = HOME + "/data_client.log"
 CONFIG_FILE           = HOME + "/data_client.config"
 CONFIG_READ_INTERVAL  = 10.0
+
  
 CB_LOGGING_LEVEL      = "DEBUG"
 logger = logging.getLogger('Logger')
@@ -62,13 +62,15 @@ except Exception as e:
     print("Problem setting config file: {}, {}".format(type(e), e.args))
     sys.exit()
 
-reactor.suggestThreadPoolSize(10)
+reactor.suggestThreadPoolSize(30)
 
 def nicetime(timeStamp):
     localtime = time.localtime(timeStamp)
     milliseconds = '%03d' % int((timeStamp - int(timeStamp)) * 1000)
     now = time.strftime('%H:%M:%S, %d-%m-%Y', localtime)
     return now
+
+print "Start time: %s", nicetime(time.time())
 
 def sendMail(to, sender, subject, body):
     try:
@@ -102,35 +104,28 @@ def sendMail(to, sender, subject, body):
     except Exception as ex:
         logger.warning("sendMail problem. To: %s, type %s, exception: %s", to, type(ex), str(ex.args))
 
-       
-def postInfluxDB1(dat, bid):
+def postInfluxDB1(dat, bid, db):
+    """
+    global prevDat
+    try:
+        if dat == prevDat:
+            logger.warning("Posting duplicate data old: %s", json.dumps(prevDat,indent=4))
+            logger.warning("Posting duplicate data new: %s", json.dumps(dat,indent=4))
+    except:
+        logger.warning("First time round")
+
+    prevDat = dat
+    """
     url = config["dburl2"]
     #logger.debug("InfluxDB1, url: {}".format(url))
-    #N.B. it'll fail if the db doesn't exist - should create it here really
-    if "database" in config["bridges"][bid]:
-        db = config["bridges"][bid]["database"] 
-    else:
-        db = "Bridges"
     #logger.debug("Influx, writing to db %s", db)
     #logger.debug("InfluxDB1, writing: {}\n to database %s".format(dat), db)
     logger.debug("Posting to %s database: %s", db, json.dumps(dat, indent=4))
     try:
         client = InfluxDBClient(host=url, port=8086, database=db)
-    except Exception as e:
-        logger.warning("postInfluxApi, api problem in client: {} {}".format(type(e), e.args))
-    try:
         result = client.write_points(dat, time_precision="ms")
-        #result = client.write_points(dat)
     except Exception as e:
-        logger.warning("postInfluxApi, api problem during write: {} {}".format(type(e), e.args))
-    """
-    if not result:
-        logger.warning("postInfluxApi call failed")
-    else:
-        logger.debug("postInfluxApi call succeeded")
-    """
-    #except Exception as ex:
-    #    logger.warning("postInfluxDB problem, type %s, exception: %s", type(ex), str(ex.args))
+        logger.warning("postInfluxApi, api problem: {} {}".format(type(e), e.args))
 
 def postInfluxDB(dat, bid):
     try:
@@ -351,14 +346,17 @@ class ClientWSProtocol(WebSocketClientProtocol):
                         tdiff =  time.time() - d["points"][0][0]/1000
                         if abs(tdiff) > 300:
                             logger.warning("Bridge %s and client time are different by %s seconds", bid, str(tdiff))
+                            logger.warning("    Bridge timestamp in %s: %s", d["name"], nicetime(d["points"][0][0]/1000))
                         do["time"] = d["points"][0][0]
-                        if s[2]:
+                        if len(s) == 3:
                             do["tags"]["characteristic"] = s[2]
-                            if s[2] == "power":
-                                do["fields"]["value"] = int(d["points"][0][1])
-                                logger.debug("Casting %s to  %s", d["points"][0][1], do["fields"]["value"])
+                            if s[2] == "power" or s[2] == "temperature":
+                                do["fields"]["fvalue"] = float(d["points"][0][1])
+                                do["fields"]["value"] = ""
+                                logger.debug("Casting %s to  %s", d["points"][0][1], do["fields"]["fvalue"])
                             else:
                                 do["fields"]["value"] = d["points"][0][1]
+                                do["fields"]["fvalue"] = ""
                         else:
                             do["tags"]["characteristic"] = "event"
                             do["fields"]["value"] = d["points"][0][1]
@@ -369,7 +367,12 @@ class ClientWSProtocol(WebSocketClientProtocol):
                         if "name_in_database" in config["bridges"][bid]:
                             do["tags"]["name_in_database"] = config["bridges"][bid]["name_in_database"]
                         dd = [do]
-                        reactor.callInThread(postInfluxDB1, dd, bid)
+                        #N.B. it'll fail if the db doesn't exist - should create it here really
+                        if "database" in config["bridges"][bid]:
+                            db = config["bridges"][bid]["database"] 
+                        else:
+                            db = "Bridges"
+                        reactor.callInThread(postInfluxDB1, dd, bid, db)
                 except Exception as ex:
                     logger.warning("Problem processing data message, exception: %s %s", str(type(ex)), str(ex.args))
         elif body["m"] == "req_config":
